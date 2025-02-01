@@ -9,9 +9,12 @@
 #   6. Installs the latest Intel Microcode.
 #   7. Upgrades the server.
 #   8. Provides options to enable or disable High Availability (HA) services.
-#   9. Prompts for a reboot.
+#   9. Optionally installs a pretty login banner.
+#  10. Prompts for a reboot.
 #
 # Required utilities: curl, sed, apt, dpkg, wget
+#
+# ℹ️ More on MOTD customization: **[update-motd](https://www.google.com/search?q=update+motd)** {📝}
 
 # ─── Color Variables ──────────────────────────────────────────────────
 RED="\033[0;31m"
@@ -40,7 +43,7 @@ ask_yes_no() {
 # ─── 1. Configure NTP via Chrony ───────────────────────────────────────
 if ask_yes_no "Do you want to configure NTP based on your country?"; then
     print_banner "Configuring NTP"
-    echo -e "${GREEN}Detecting your country via [ipinfo.io](https://www.google.com/search?q=ipinfo.io)${NC}"
+    echo -e "${GREEN}Detecting your country via ${YELLOW}[ipinfo.io](https://www.google.com/search?q=ipinfo.io)${NC}"
     COUNTRY=$(curl -s ipinfo.io | grep '"country":' | cut -d'"' -f4)
     if [ -z "$COUNTRY" ]; then
         echo -e "${RED}Unable to detect country. Skipping NTP configuration.${NC}"
@@ -68,7 +71,7 @@ EOF
             # Confirm chrony is running (trimmed output)
             if systemctl is-active --quiet chrony; then
                 echo -e "${GREEN}chrony is active (running).${NC}"
-                echo -e "${GREEN}Current NTP sources (via [chronyc sources](https://www.google.com/search?q=chronyc+sources)):${NC}"
+                echo -e "${GREEN}Current NTP sources (via ${YELLOW}[chronyc sources](https://www.google.com/search?q=chronyc+sources)${NC}):"
                 chronyc sources
             else
                 echo -e "${RED}chrony service is not active!${NC}"
@@ -157,7 +160,6 @@ fi
 # ─── 7. High Availability (HA) Service Management ─────────────────────
 print_banner "High Availability (HA) Management"
 
-# If HA services are active, offer to disable them for single node setups.
 if systemctl is-active --quiet pve-ha-lrm; then
     if ask_yes_no "HA services are active. Do you want to disable HA services for a single node environment?"; then
         echo -e "${GREEN}Disabling HA services...${NC}"
@@ -180,7 +182,56 @@ else
     fi
 fi
 
-# ─── 8. Prompt for Reboot ─────────────────────────────────────────────
+# ─── 8. Install Pretty Login Banner ────────────────────────────────────
+if ask_yes_no "Do you want to install a pretty login banner?"; then
+    print_banner "Installing Pretty Login Banner"
+    cat << 'EOF' > /etc/update-motd.d/10-system-summary
+#!/bin/bash
+
+KERNEL_VERSION=$(uname -r)
+HOSTNAME=$(hostname)
+# Gather only IPv4 addresses, one per line, and join them with ', '.
+IP_ADDRESSES=$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.' | paste -sd ', ' -)
+UPTIME=$(uptime -p | sed 's/^up //')
+MEMORY=$(free -m | awk 'NR==2{printf "%s MB (Total) | %s MB (Free)", $2, $4}')
+DISK_SPACE=$(df -h --total | awk 'END{printf "%s (Total) | %s (Free)", $2, $4}')
+# Retrieve PVE version using the [pveversion](https://www.google.com/search?q=pveversion) command.
+PVE_VERSION=$(pveversion | awk -F'/' '/pve-manager/ {print $2}' | awk '{print $1}')
+LOAD_AVG=$(uptime | awk -F'load average:' '{ print $2 }')
+
+MANUFACTURER=$(sudo dmidecode -s system-manufacturer)
+MODEL=$(sudo dmidecode -s system-product-name)
+SERIAL=$(sudo dmidecode -s system-serial-number)
+PROC=$(sudo dmidecode -s processor-version | head -n 1)
+
+cat << EOM
+
+🔶   ${HOSTNAME}  🔶
+
+  🔹Proxmox Version : ${PVE_VERSION}
+  🔹Server        : $MANUFACTURER $MODEL ($SERIAL)
+  🔹Processor     : $PROC
+  🔹Hostname      : $HOSTNAME
+  🔹Kernel        : $KERNEL_VERSION
+  🔹Uptime        : $UPTIME
+  🔹Ip Addresses  : $IP_ADDRESSES
+  🔹Memory        : $MEMORY
+  🔹Disk Space    : $DISK_SPACE
+  🔹Load Avg      : $LOAD_AVG
+
+EOM
+EOF
+    chmod +x /etc/update-motd.d/10-system-summary
+    echo -e "${GREEN}Pretty login banner installed.${NC}"
+
+    # Clear static MOTD files to prevent duplicate or extra output.
+    [ -f /etc/motd ] && > /etc/motd
+    [ -f /etc/motd.tail ] && > /etc/motd.tail
+    [ -f /var/run/motd ] && > /var/run/motd
+fi
+
+
+# ─── 9. Prompt for Reboot ─────────────────────────────────────────────
 if ask_yes_no "Do you want to reboot the server now?"; then
     print_banner "Rebooting Server"
     echo -e "${GREEN}Rebooting...${NC}"
@@ -190,3 +241,4 @@ else
 fi
 
 print_banner "Post-install Configuration Complete"
+
