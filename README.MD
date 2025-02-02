@@ -26,11 +26,10 @@ Streamlines the post-installation configuration of a Proxmox VE system with feat
 - High Availability service management
 - System package updates
 
-### 3. Intel vGPU Setup
+### 3. Intel vGPU Enablement
 **Location:** [`intel-vgpu-enablement/`](intel-vgpu-enablement/)
 
 Automates the setup of Intel vGPU (SR-IOV) on Proxmox VE systems. Supports:
-- Compatible Intel GPUs (Arc A770, A750, A380, Data Center GPU Flex Series)
 - Automatic driver installation and configuration
 - GRUB configuration for vGPU support
 - System preparation for SR-IOV operation

@@ -121,16 +121,26 @@ fi
 # ─── 4. Install LLDP and Configure Interface Reporting ────────────────
 if ask_yes_no "Do you want to install LLDP and configure Linux-style interface name reporting?"; then
     print_banner "Installing LLDP"
-    echo -e "${GREEN}Installing lldpd...${NC}"
-    apt-get install lldpd -y
+    echo -e "${GREEN}Installing lldpd and sysfsutils...${NC}"
+    apt-get install lldpd sysfsutils -y
     echo -e "${GREEN}Configuring lldpd...${NC}"
     echo "configure lldp portidsubtype ifname" | tee /etc/lldpd.conf > /dev/null
     
     # Check if Intel X710 adapters exist
     if [ -d "/sys/kernel/debug/i40e" ] && [ -n "$(ls -A /sys/kernel/debug/i40e/)" ]; then
         echo -e "${GREEN}Intel X710 adapters detected - disabling firmware-level LLDP...${NC}"
+        
+        # Add X710 NICs to sysfs.conf
+        echo -e "${GREEN}Adding X710 NICs to sysfs.conf...${NC}"
         for dev in /sys/kernel/debug/i40e/*; do
             if [ -d "$dev" ]; then
+                # Get NIC name from directory
+                nic_name=$(basename "$dev")
+                # Add entry to sysfs.conf if not already present
+                if ! grep -q "class/net/$nic_name/device/i40e/$nic_name/fw_lldp" /etc/sysfs.conf; then
+                    echo "class/net/$nic_name/device/i40e/$nic_name/fw_lldp = 0" >> /etc/sysfs.conf
+                fi
+                # Disable LLDP immediately
                 echo "lldp stop" >> "$dev/command"
             fi
         done
