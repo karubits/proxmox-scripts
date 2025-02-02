@@ -125,6 +125,17 @@ if ask_yes_no "Do you want to install LLDP and configure Linux-style interface n
     apt-get install lldpd -y
     echo -e "${GREEN}Configuring lldpd...${NC}"
     echo "configure lldp portidsubtype ifname" | tee /etc/lldpd.conf > /dev/null
+    
+    # Check if Intel X710 adapters exist
+    if [ -d "/sys/kernel/debug/i40e" ] && [ -n "$(ls -A /sys/kernel/debug/i40e/)" ]; then
+        echo -e "${GREEN}Intel X710 adapters detected - disabling firmware-level LLDP...${NC}"
+        for dev in /sys/kernel/debug/i40e/*; do
+            if [ -d "$dev" ]; then
+                echo "lldp stop" >> "$dev/command"
+            fi
+        done
+    fi
+    
     echo -e "${GREEN}Restarting lldpd service...${NC}"
     systemctl restart lldpd.service
     echo -e "${GREEN}LLDP installation and configuration complete.${NC}"
