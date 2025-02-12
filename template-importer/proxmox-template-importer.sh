@@ -23,6 +23,34 @@ ENABLE_EFI=false
 DISK_FORMAT="qcow2"
 
 #######################################
+# Convert raw disk image to qcow2 format
+# Arguments:
+#   $1 - Source raw image path
+#   $2 - Target directory
+# Returns:
+#   Path to the converted qcow2 image
+#######################################
+convert_raw_to_qcow2() {
+    local raw_image="$1"
+    local target_dir="$2"
+    local qcow2_image="${target_dir}/$(basename "${raw_image%.*}").qcow2"
+
+    echo -e "${BLUE}Converting raw image to qcow2 format...${NC}"
+    if ! command -v qemu-img &> /dev/null; then
+        echo -e "${YELLOW}qemu-img not found. Installing qemu-utils...${NC}"
+        apt-get update && apt-get install -y qemu-utils
+    fi
+
+    if qemu-img convert -f raw -O qcow2 "$raw_image" "$qcow2_image"; then
+        echo -e "${GREEN}Image converted successfully${NC}"
+        echo "$qcow2_image"
+    else
+        echo -e "${RED}Failed to convert image${NC}"
+        exit 1
+    fi
+}
+
+#######################################
 # Extract compressed files based on their extension
 # Arguments:
 #   $1 - Path to compressed file
@@ -41,8 +69,14 @@ extract_compressed_file() {
             tar -xf "$compressed_file" -C "$target_dir"
             # For Kali cloud image, we know it extracts to disk.raw
             if [[ "$compressed_file" == *"kali-linux"*"cloud-genericcloud"* ]]; then
-                extracted_file="${target_dir}/disk.raw"
-                DISK_FORMAT="raw"
+                local raw_file="${target_dir}/disk.raw"
+                if [[ -f "$raw_file" ]]; then
+                    extracted_file=$(convert_raw_to_qcow2 "$raw_file" "$target_dir")
+                    DISK_FORMAT="qcow2"
+                else
+                    echo -e "${RED}Expected raw file not found: $raw_file${NC}"
+                    exit 1
+                fi
             fi
             ;;
         *.7z)
@@ -61,11 +95,12 @@ extract_compressed_file() {
         *)
             # Not a compressed file, set format based on extension
             if [[ "$compressed_file" == *.raw ]]; then
-                DISK_FORMAT="raw"
+                extracted_file=$(convert_raw_to_qcow2 "$compressed_file" "$target_dir")
+                DISK_FORMAT="qcow2"
             else
                 DISK_FORMAT="qcow2"
+                extracted_file="$compressed_file"
             fi
-            extracted_file="$compressed_file"
             ;;
     esac
 
@@ -315,28 +350,55 @@ get_cloud_init_inputs() {
 # The verbose output from qm importdisk is suppressed.
 #######################################
 import_vm() {
-    echo -e "${BLUE}Creating VM template with ID ${VM_TEMPLATE_ID} and name ${TEMPLATE_NAME}...${NC}"
-    # Build the create command with EFI option if enabled
-    CREATE_CMD=(qm create ${VM_TEMPLATE_ID} \
-        --name "${TEMPLATE_NAME}" \
-        --cores 2 \
-        --memory 2048 \
-        --net0 virtio,bridge=vmbr0 \
-        --ide2 "${STORAGE}:cloudinit" \
-        --serial0 socket \
-        --vga serial0 \
-        --onboot 1 \
-        --agent 1,fstrim_cloned_disks=1 \
-        --tablet 0 \
-        --ostype l26)
-    if [ "$ENABLE_EFI" = true ]; then
-        CREATE_CMD+=(--bios ovmf)
-    fi
-    "${CREATE_CMD[@]}"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Failed to create VM template. Exiting.${NC}"
-        exit 1
-    fi
+    local create_success=false
+
+    while [ "$create_success" = false ]; do
+        echo -e "${BLUE}Creating VM template with ID ${VM_TEMPLATE_ID} and name ${TEMPLATE_NAME}...${NC}"
+        # Build the create command with EFI option if enabled
+        CREATE_CMD=(qm create ${VM_TEMPLATE_ID} \
+            --name "${TEMPLATE_NAME}" \
+            --cores 2 \
+            --memory 2048 \
+            --net0 virtio,bridge=vmbr0 \
+            --ide2 "${STORAGE}:cloudinit" \
+            --serial0 socket \
+            --vga serial0 \
+            --onboot 1 \
+            --agent 1,fstrim_cloned_disks=1 \
+            --tablet 0 \
+            --ostype l26)
+        if [ "$ENABLE_EFI" = true ]; then
+            CREATE_CMD+=(--bios ovmf)
+        fi
+
+        if "${CREATE_CMD[@]}" 2>/dev/null; then
+            create_success=true
+        else
+            echo -e "${YELLOW}VM ID ${VM_TEMPLATE_ID} is not available.${NC}"
+            # Get the next available VM ID as a suggestion
+            local next_id=$(pvesh get /cluster/nextid 2>/dev/null)
+            next_id=${next_id:-$((VM_TEMPLATE_ID + 1))}  # Fallback to current + 1 if pvesh fails
+            
+            while true; do
+                read -p "Enter a different VM ID (suggested: ${next_id}): " new_id
+                new_id=${new_id:-$next_id}
+                
+                # Validate input is a number
+                if ! [[ "$new_id" =~ ^[0-9]+$ ]]; then
+                    echo -e "${RED}Please enter a valid number.${NC}"
+                    continue
+                fi
+                
+                # Check if the new ID is available
+                if ! qm status $new_id >/dev/null 2>&1; then
+                    VM_TEMPLATE_ID=$new_id
+                    break
+                else
+                    echo -e "${RED}VM ID ${new_id} is already in use. Please choose another.${NC}"
+                fi
+            done
+        fi
+    done
 
     echo -e "${BLUE}Importing disk image into VM template...${NC}"
     if qm importdisk ${VM_TEMPLATE_ID} "${CLOUD_IMAGE_PATH}" ${STORAGE} --format ${DISK_FORMAT} > /dev/null 2>&1; then
@@ -351,7 +413,7 @@ import_vm() {
     sleep 2
     qm set ${VM_TEMPLATE_ID} \
         --scsihw virtio-scsi-pci \
-        --scsi0 "${STORAGE}:vm-${VM_TEMPLATE_ID}-disk-0,discard=on,ssd=1" \
+        --scsi0 "${STORAGE}:${VM_TEMPLATE_ID}/vm-${VM_TEMPLATE_ID}-disk-0.qcow2,discard=on,ssd=1" \
         --boot c \
         --bootdisk scsi0
 
