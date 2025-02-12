@@ -21,24 +21,75 @@ REDHAT_BASED=false
 ENABLE_EFI=false
 
 #######################################
+# Extract compressed files based on their extension
+# Arguments:
+#   $1 - Path to compressed file
+#   $2 - Target directory
+# Returns:
+#   Path to the extracted image file
+#######################################
+extract_compressed_file() {
+    local compressed_file="$1"
+    local target_dir="$2"
+    local extracted_file=""
+
+    case "$compressed_file" in
+        *.tar.xz)
+            echo -e "${BLUE}Extracting tar.xz file...${NC}"
+            tar -xf "$compressed_file" -C "$target_dir"
+            # For Kali cloud image, we know it extracts to disk.raw
+            if [[ "$compressed_file" == *"kali-linux"*"cloud-genericcloud"* ]]; then
+                extracted_file="${target_dir}/disk.raw"
+            fi
+            ;;
+        *.7z)
+            echo -e "${BLUE}Extracting 7z file...${NC}"
+            if ! command -v 7z &> /dev/null; then
+                echo -e "${YELLOW}7z not found. Installing p7zip-full...${NC}"
+                apt-get update && apt-get install -y p7zip-full
+            fi
+            7z x "$compressed_file" -o"$target_dir"
+            # For Kali desktop image, we know it extracts to .qcow2
+            if [[ "$compressed_file" == *"kali-linux"*"qemu"* ]]; then
+                extracted_file="${target_dir}/kali-linux-"*"-qemu-amd64.qcow2"
+            fi
+            ;;
+        *)
+            # Not a compressed file, return original
+            extracted_file="$compressed_file"
+            ;;
+    esac
+
+    # If we found an extracted file, update CLOUD_IMAGE_PATH
+    if [[ -n "$extracted_file" && -f "$extracted_file" ]]; then
+        echo -e "${GREEN}Extracted file: $extracted_file${NC}"
+        CLOUD_IMAGE_PATH="$extracted_file"
+    else
+        echo -e "${RED}Failed to extract or find the image file${NC}"
+        exit 1
+    fi
+}
+
+#######################################
 # Global array of cloud images.
 # Format: "Display Name|Download URL|Filename"
 # (The images will be sorted alphabetically by Display Name.)
 #######################################
 IMAGES=(
-  "AlmaLinux 8|https://repo.almalinux.org/almalinux/8/cloud/x86_64/images/AlmaLinux-8-GenericCloud-latest.x86_64.qcow2|AlmaLinux-8-GenericCloud-latest.x86_64.qcow2"
-  "AlmaLinux 9|https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2|AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
-  "Debian 10 Buster|https://cloud.debian.org/images/cloud/buster/latest/debian-10-genericcloud-amd64.qcow2|debian-10-genericcloud-amd64.qcow2"
-  "Debian 11 Bullseye|https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-genericcloud-amd64.qcow2|debian-11-genericcloud-amd64.qcow2"
-  "Debian 11 Bullseye (Backports)|https://cloud.debian.org/images/cloud/bullseye-backports/latest/debian-11-backports-genericcloud-amd64.qcow2|debian-11-backports-genericcloud-amd64.qcow2"
-  "Debian 12 Bookworm|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2|debian-12-generic-amd64.qcow2"
-  "Fedora 38|https://ftp.riken.jp/Linux/fedora/releases/38/Cloud/x86_64/images/Fedora-Cloud-Base-38-1.6.x86_64.qcow2|Fedora-Cloud-Base-38-1.6.x86_64.qcow2"
-  "Kali Linux 2022.4|https://kali.download/cloud-images/current/kali-linux-2022.4-cloud-genericcloud-amd64.tar.xz|kali-linux-2022.4-cloud-genericcloud-amd64.tar.xz"
-  "Rocky Linux 8|https://dl.rockylinux.org/pub/rocky/8/images/x86_64/Rocky-8-GenericCloud-Base.latest.x86_64.qcow2|Rocky-8-GenericCloud-Base.latest.x86_64.qcow2"
-  "Rocky Linux 9|https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2|Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"
-  "Ubuntu 18.04 LTS Bionic Beaver|https://cloud-images.ubuntu.com/bionic/current/bionic-server-cloudimg-amd64.img|bionic-server-cloudimg-amd64.img"
-  "Ubuntu 20.04 LTS Focal Fossa|https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img|focal-server-cloudimg-amd64.img"
-  "Ubuntu 24.04 LTS Noble Numbat|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|noble-server-cloudimg-amd64.img"
+    "AlmaLinux 8|https://repo.almalinux.org/almalinux/8/cloud/x86_64/images/AlmaLinux-8-GenericCloud-latest.x86_64.qcow2|AlmaLinux-8-GenericCloud-latest.x86_64.qcow2"
+    "AlmaLinux 9|https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2|AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
+    "Debian 10 Buster|https://cloud.debian.org/images/cloud/buster/latest/debian-10-genericcloud-amd64.qcow2|debian-10-genericcloud-amd64.qcow2"
+    "Debian 11 Bullseye|https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-genericcloud-amd64.qcow2|debian-11-genericcloud-amd64.qcow2"
+    "Debian 11 Bullseye (Backports)|https://cloud.debian.org/images/cloud/bullseye-backports/latest/debian-11-backports-genericcloud-amd64.qcow2|debian-11-backports-genericcloud-amd64.qcow2"
+    "Debian 12 Bookworm|https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2|debian-12-generic-amd64.qcow2"
+    "Fedora 38|https://ftp.riken.jp/Linux/fedora/releases/38/Cloud/x86_64/images/Fedora-Cloud-Base-38-1.6.x86_64.qcow2|Fedora-Cloud-Base-38-1.6.x86_64.qcow2"
+    "Kali Linux 2024.4 Cloud|https://kali.download/cloud-images/current/kali-linux-2024.4-cloud-genericcloud-amd64.tar.xz|kali-linux-2024.4-cloud-genericcloud-amd64.tar.xz"
+    "Kali Linux 2024.4 Desktop|https://cdimage.kali.org/kali-2024.4/kali-linux-2024.4-qemu-amd64.7z|kali-linux-2024.4-qemu-amd64.7z"
+    "Rocky Linux 8|https://dl.rockylinux.org/pub/rocky/8/images/x86_64/Rocky-8-GenericCloud-Base.latest.x86_64.qcow2|Rocky-8-GenericCloud-Base.latest.x86_64.qcow2"
+    "Rocky Linux 9|https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2|Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"
+    "Ubuntu 18.04 LTS Bionic Beaver|https://cloud-images.ubuntu.com/bionic/current/bionic-server-cloudimg-amd64.img|bionic-server-cloudimg-amd64.img"
+    "Ubuntu 20.04 LTS Focal Fossa|https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img|focal-server-cloudimg-amd64.img"
+    "Ubuntu 24.04 LTS Noble Numbat|https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img|noble-server-cloudimg-amd64.img"
 )
 
 #######################################
@@ -120,6 +171,11 @@ download_image() {
     fi
     CLOUD_IMAGE_PATH="${TMP_DIR}/${CLOUD_IMAGE_FILENAME}"
     echo -e "${GREEN}Download completed: ${CLOUD_IMAGE_PATH}${NC}"
+
+    # Handle compressed files
+    if [[ "$CLOUD_IMAGE_FILENAME" =~ \.(tar\.xz|7z)$ ]]; then
+        extract_compressed_file "$CLOUD_IMAGE_PATH" "$TMP_DIR"
+    fi
 }
 
 #######################################
