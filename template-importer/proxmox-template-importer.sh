@@ -23,6 +23,39 @@ ENABLE_EFI=false
 DISK_FORMAT="qcow2"
 
 #######################################
+# Check if a package is installed and prompt for installation if not
+# Arguments:
+#   $1 - Package name
+#   $2 - Package description or purpose
+# Returns:
+#   0 if package is available (installed or user approved installation)
+#   1 if package is not available (user declined installation)
+#######################################
+check_and_install_package() {
+    local package="$1"
+    local description="$2"
+
+    if ! command -v "$package" &> /dev/null; then
+        echo -e "${YELLOW}${package} is not installed.${NC}"
+        read -p "Do you want to install ${package} (${description})? [y/N]: " choice
+        if [[ "$choice" =~ ^[Yy]$ ]]; then
+            echo -e "${BLUE}Installing ${package}...${NC}"
+            if apt-get update && apt-get install -y "$package"; then
+                echo -e "${GREEN}Successfully installed ${package}.${NC}"
+                return 0
+            else
+                echo -e "${RED}Failed to install ${package}.${NC}"
+                return 1
+            fi
+        else
+            echo -e "${RED}Skipping ${package} installation.${NC}"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+#######################################
 # Convert raw disk image to qcow2 format
 # Arguments:
 #   $1 - Source raw image path
@@ -37,8 +70,10 @@ convert_raw_to_qcow2() {
 
     echo -e "${BLUE}Converting raw image to qcow2 format...${NC}"
     if ! command -v qemu-img &> /dev/null; then
-        echo -e "${YELLOW}qemu-img not found. Installing qemu-utils...${NC}"
-        apt-get update && apt-get install -y qemu-utils
+        if ! check_and_install_package "qemu-utils" "required for image conversion"; then
+            echo -e "${RED}qemu-utils is required for image conversion. Exiting.${NC}"
+            exit 1
+        fi
     fi
 
     if qemu-img convert -f raw -O qcow2 "$raw_image" "$qcow2_image"; then
@@ -71,8 +106,16 @@ extract_compressed_file() {
             if [[ "$compressed_file" == *"kali-linux"*"cloud-genericcloud"* ]]; then
                 local raw_file="${target_dir}/disk.raw"
                 if [[ -f "$raw_file" ]]; then
-                    extracted_file=$(convert_raw_to_qcow2 "$raw_file" "$target_dir")
-                    DISK_FORMAT="qcow2"
+                    # Convert raw to qcow2 and use the converted file
+                    qemu-img convert -f raw -O qcow2 "$raw_file" "${target_dir}/disk.qcow2"
+                    if [[ $? -eq 0 && -f "${target_dir}/disk.qcow2" ]]; then
+                        extracted_file="${target_dir}/disk.qcow2"
+                        DISK_FORMAT="qcow2"
+                        echo -e "${GREEN}Successfully converted raw image to qcow2${NC}"
+                    else
+                        echo -e "${RED}Failed to convert raw image to qcow2${NC}"
+                        exit 1
+                    fi
                 else
                     echo -e "${RED}Expected raw file not found: $raw_file${NC}"
                     exit 1
@@ -82,21 +125,29 @@ extract_compressed_file() {
         *.7z)
             echo -e "${BLUE}Extracting 7z file...${NC}"
             if ! command -v 7z &> /dev/null; then
-                echo -e "${YELLOW}7z not found. Installing p7zip-full...${NC}"
-                apt-get update && apt-get install -y p7zip-full
+                if ! check_and_install_package "p7zip-full" "required for 7z extraction"; then
+                    echo -e "${RED}p7zip-full is required to extract 7z files. Exiting.${NC}"
+                    exit 1
+                fi
             fi
             7z x "$compressed_file" -o"$target_dir"
             # For Kali desktop image, we know it extracts to .qcow2
             if [[ "$compressed_file" == *"kali-linux"*"qemu"* ]]; then
-                extracted_file="${target_dir}/kali-linux-"*"-qemu-amd64.qcow2"
+                extracted_file=$(find "$target_dir" -name "kali-linux-*-qemu-amd64.qcow2" -type f)
                 DISK_FORMAT="qcow2"
             fi
             ;;
         *)
             # Not a compressed file, set format based on extension
             if [[ "$compressed_file" == *.raw ]]; then
-                extracted_file=$(convert_raw_to_qcow2 "$compressed_file" "$target_dir")
-                DISK_FORMAT="qcow2"
+                qemu-img convert -f raw -O qcow2 "$compressed_file" "${target_dir}/$(basename "${compressed_file%.*}").qcow2"
+                if [[ $? -eq 0 ]]; then
+                    extracted_file="${target_dir}/$(basename "${compressed_file%.*}").qcow2"
+                    DISK_FORMAT="qcow2"
+                else
+                    echo -e "${RED}Failed to convert raw image to qcow2${NC}"
+                    exit 1
+                fi
             else
                 DISK_FORMAT="qcow2"
                 extracted_file="$compressed_file"
@@ -106,10 +157,13 @@ extract_compressed_file() {
 
     # If we found an extracted file, update CLOUD_IMAGE_PATH
     if [[ -n "$extracted_file" && -f "$extracted_file" ]]; then
-        echo -e "${GREEN}Extracted file: $extracted_file (Format: $DISK_FORMAT)${NC}"
+        echo -e "${GREEN}Using image file: $extracted_file (Format: $DISK_FORMAT)${NC}"
         CLOUD_IMAGE_PATH="$extracted_file"
     else
         echo -e "${RED}Failed to extract or find the image file${NC}"
+        # List the contents of the target directory for debugging
+        echo -e "${YELLOW}Contents of $target_dir:${NC}"
+        ls -la "$target_dir"
         exit 1
     fi
 }
@@ -307,6 +361,12 @@ check_vm_id_taken() {
 # The default VM ID is the next available (via pvesh) and is checked against existing IDs.
 #######################################
 get_cloud_init_inputs() {
+    # Skip cloud-init configuration for Kali Desktop
+    if [[ "$SELECTED_IMAGE_NAME" == *"Kali Linux"*"Desktop"* ]]; then
+        echo -e "${BLUE}Skipping cloud-init configuration for Kali Desktop image${NC}"
+        return
+    fi
+
     echo -e "${BLUE}==========================================${NC}"
     echo -e "${BLUE}Cloud-Init Template Settings${NC}"
     echo -e "${BLUE}==========================================${NC}"
@@ -351,22 +411,35 @@ get_cloud_init_inputs() {
 #######################################
 import_vm() {
     local create_success=false
+    local is_kali_desktop=false
+
+    # Check if this is Kali Desktop image
+    if [[ "$SELECTED_IMAGE_NAME" == *"Kali Linux"*"Desktop"* ]]; then
+        is_kali_desktop=true
+        echo -e "${BLUE}Detected Kali Desktop image - configuring for desktop use${NC}"
+    fi
 
     while [ "$create_success" = false ]; do
         echo -e "${BLUE}Creating VM template with ID ${VM_TEMPLATE_ID} and name ${TEMPLATE_NAME}...${NC}"
-        # Build the create command with EFI option if enabled
+        # Build the create command with appropriate options
         CREATE_CMD=(qm create ${VM_TEMPLATE_ID} \
             --name "${TEMPLATE_NAME}" \
             --cores 2 \
             --memory 2048 \
             --net0 virtio,bridge=vmbr0 \
-            --ide2 "${STORAGE}:cloudinit" \
             --serial0 socket \
-            --vga serial0 \
             --onboot 1 \
             --agent 1,fstrim_cloned_disks=1 \
             --tablet 0 \
             --ostype l26)
+
+        # Add specific options based on image type
+        if [ "$is_kali_desktop" = true ]; then
+            CREATE_CMD+=(--vga qxl)
+        else
+            CREATE_CMD+=(--vga serial0 --ide2 "${STORAGE}:cloudinit")
+        fi
+
         if [ "$ENABLE_EFI" = true ]; then
             CREATE_CMD+=(--bios ovmf)
         fi
@@ -417,13 +490,16 @@ import_vm() {
         --boot c \
         --bootdisk scsi0
 
-    echo -e "${BLUE}Configuring cloud-init settings for the template...${NC}"
-    qm set ${VM_TEMPLATE_ID} \
-        --nameserver="${DNS1} ${DNS2}" \
-        --searchdomain="${DNSSEARCH}" \
-        --ipconfig0=ip=dhcp \
-        --ciuser="${VM_USER}" \
-        --cipassword="${VM_PASSWORD}"
+    # Only configure cloud-init for non-desktop images
+    if [ "$is_kali_desktop" = false ]; then
+        echo -e "${BLUE}Configuring cloud-init settings for the template...${NC}"
+        qm set ${VM_TEMPLATE_ID} \
+            --nameserver="${DNS1} ${DNS2}" \
+            --searchdomain="${DNSSEARCH}" \
+            --ipconfig0=ip=dhcp \
+            --ciuser="${VM_USER}" \
+            --cipassword="${VM_PASSWORD}"
+    fi
 
     echo -e "${BLUE}Converting VM to template...${NC}"
     if qm template ${VM_TEMPLATE_ID} > /dev/null 2>&1; then
