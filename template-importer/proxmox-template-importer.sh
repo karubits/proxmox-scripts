@@ -19,6 +19,8 @@ VIRT_CUSTOMIZE_AVAILABLE=false
 REDHAT_BASED=false
 # Global flag for EFI enablement
 ENABLE_EFI=false
+# Global variable for disk format
+DISK_FORMAT="qcow2"
 
 #######################################
 # Extract compressed files based on their extension
@@ -40,6 +42,7 @@ extract_compressed_file() {
             # For Kali cloud image, we know it extracts to disk.raw
             if [[ "$compressed_file" == *"kali-linux"*"cloud-genericcloud"* ]]; then
                 extracted_file="${target_dir}/disk.raw"
+                DISK_FORMAT="raw"
             fi
             ;;
         *.7z)
@@ -52,17 +55,23 @@ extract_compressed_file() {
             # For Kali desktop image, we know it extracts to .qcow2
             if [[ "$compressed_file" == *"kali-linux"*"qemu"* ]]; then
                 extracted_file="${target_dir}/kali-linux-"*"-qemu-amd64.qcow2"
+                DISK_FORMAT="qcow2"
             fi
             ;;
         *)
-            # Not a compressed file, return original
+            # Not a compressed file, set format based on extension
+            if [[ "$compressed_file" == *.raw ]]; then
+                DISK_FORMAT="raw"
+            else
+                DISK_FORMAT="qcow2"
+            fi
             extracted_file="$compressed_file"
             ;;
     esac
 
     # If we found an extracted file, update CLOUD_IMAGE_PATH
     if [[ -n "$extracted_file" && -f "$extracted_file" ]]; then
-        echo -e "${GREEN}Extracted file: $extracted_file${NC}"
+        echo -e "${GREEN}Extracted file: $extracted_file (Format: $DISK_FORMAT)${NC}"
         CLOUD_IMAGE_PATH="$extracted_file"
     else
         echo -e "${RED}Failed to extract or find the image file${NC}"
@@ -307,7 +316,7 @@ get_cloud_init_inputs() {
 #######################################
 import_vm() {
     echo -e "${BLUE}Creating VM template with ID ${VM_TEMPLATE_ID} and name ${TEMPLATE_NAME}...${NC}"
-    # Build the create command with EFI option if enabled.
+    # Build the create command with EFI option if enabled
     CREATE_CMD=(qm create ${VM_TEMPLATE_ID} \
         --name "${TEMPLATE_NAME}" \
         --cores 2 \
@@ -330,7 +339,7 @@ import_vm() {
     fi
 
     echo -e "${BLUE}Importing disk image into VM template...${NC}"
-    if qm importdisk ${VM_TEMPLATE_ID} "${CLOUD_IMAGE_PATH}" ${STORAGE} > /dev/null 2>&1; then
+    if qm importdisk ${VM_TEMPLATE_ID} "${CLOUD_IMAGE_PATH}" ${STORAGE} --format ${DISK_FORMAT} > /dev/null 2>&1; then
         echo -e "${GREEN}Disk image imported successfully.${NC}"
     else
         echo -e "${RED}Disk import failed. Exiting.${NC}"
@@ -338,6 +347,8 @@ import_vm() {
     fi
 
     echo -e "${BLUE}Attaching disk to VM template...${NC}"
+    # Wait a moment for the import to complete and the disk to be available
+    sleep 2
     qm set ${VM_TEMPLATE_ID} \
         --scsihw virtio-scsi-pci \
         --scsi0 "${STORAGE}:vm-${VM_TEMPLATE_ID}-disk-0,discard=on,ssd=1" \
