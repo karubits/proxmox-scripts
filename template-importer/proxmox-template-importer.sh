@@ -417,12 +417,17 @@ import_vm() {
     if [[ "$SELECTED_IMAGE_NAME" == *"Kali Linux"*"Desktop"* ]]; then
         is_kali_desktop=true
         echo -e "${BLUE}Detected Kali Desktop image - configuring for desktop use${NC}"
+        
+        # Set default template name if not already set
+        TEMPLATE_NAME=${TEMPLATE_NAME:-"kali-desktop-template"}
+        # Set default VM ID if not already set
+        VM_TEMPLATE_ID=${VM_TEMPLATE_ID:-$(pvesh get /cluster/nextid 2>/dev/null || echo "9000")}
     fi
 
     while [ "$create_success" = false ]; do
         echo -e "${BLUE}Creating VM template with ID ${VM_TEMPLATE_ID} and name ${TEMPLATE_NAME}...${NC}"
         # Build the create command with appropriate options
-        CREATE_CMD=(qm create ${VM_TEMPLATE_ID} \
+        CREATE_CMD=(qm create "${VM_TEMPLATE_ID}" \
             --name "${TEMPLATE_NAME}" \
             --cores 2 \
             --memory 2048 \
@@ -462,12 +467,12 @@ import_vm() {
                     continue
                 fi
                 
-                # Check if the new ID is available
-                if ! qm status $new_id >/dev/null 2>&1; then
+                # Check if the new ID is actually available using qm status
+                if qm status "$new_id" >/dev/null 2>&1; then
+                    echo -e "${RED}VM ID ${new_id} is already in use. Please choose another.${NC}"
+                else
                     VM_TEMPLATE_ID=$new_id
                     break
-                else
-                    echo -e "${RED}VM ID ${new_id} is already in use. Please choose another.${NC}"
                 fi
             done
         fi
