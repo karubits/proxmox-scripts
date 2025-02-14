@@ -109,11 +109,13 @@ if ask_yes_no "Do you want to disable the Enterprise Repo and enable the Communi
         echo -e "${GREEN}Commenting out entries in ceph.list...${NC}"
         sed -i 's/^[[:space:]]*\(deb\)/# \1/' /etc/apt/sources.list.d/ceph.list
     fi
-    # Enable Community Repo
-    if [ -f /etc/apt/sources.list.d/pve-install-repo.list ]; then
-        echo -e "${GREEN}Enabling community repo in pve-install-repo.list...${NC}"
-        sed -i 's/^[[:space:]]*#//' /etc/apt/sources.list.d/pve-install-repo.list
-    fi
+    
+    # Create and configure Community Repo
+    echo -e "${GREEN}Creating Proxmox VE Community Repository file...${NC}"
+    cat <<EOF > /etc/apt/sources.list.d/pve-community.list
+deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription
+EOF
+    
     echo -e "${GREEN}Updating package lists...${NC}"
     apt-get update
 fi
@@ -152,20 +154,25 @@ if ask_yes_no "Do you want to install LLDP and configure Linux-style interface n
 fi
 
 # ─── 5. Install Latest Intel Microcode ────────────────────────────────
-if ask_yes_no "Do you want to install the latest Intel Microcode (v3.20241112.1)?"; then
-    print_banner "Installing Intel Microcode"
-    MICROCODE_DEB="intel-microcode_3.20241112.1_amd64.deb"
-    URL="http://ftp.us.debian.org/debian/pool/non-free-firmware/i/intel-microcode/${MICROCODE_DEB}"
-    echo -e "${GREEN}Downloading Intel Microcode from:${NC} ${YELLOW}$URL${NC}"
-    apt-get install wget -y
-    wget -q "$URL" -O "$MICROCODE_DEB"
-    if [ -f "$MICROCODE_DEB" ]; then
-        echo -e "${GREEN}Installing Intel Microcode...${NC}"
-        dpkg -i "$MICROCODE_DEB"
-        rm -f "$MICROCODE_DEB"
-    else
-        echo -e "${RED}Failed to download Intel Microcode.${NC}"
+# Check if system has an Intel processor
+if grep -q "Intel" /proc/cpuinfo; then
+    if ask_yes_no "Do you want to install the latest Intel Microcode (v3.20241112.1)?"; then
+        print_banner "Installing Intel Microcode"
+        MICROCODE_DEB="intel-microcode_3.20241112.1_amd64.deb"
+        URL="http://ftp.us.debian.org/debian/pool/non-free-firmware/i/intel-microcode/${MICROCODE_DEB}"
+        echo -e "${GREEN}Downloading Intel Microcode from:${NC} ${YELLOW}$URL${NC}"
+        apt-get install wget -y
+        wget -q "$URL" -O "$MICROCODE_DEB"
+        if [ -f "$MICROCODE_DEB" ]; then
+            echo -e "${GREEN}Installing Intel Microcode...${NC}"
+            dpkg -i "$MICROCODE_DEB"
+            rm -f "$MICROCODE_DEB"
+        else
+            echo -e "${RED}Failed to download Intel Microcode.${NC}"
+        fi
     fi
+else
+    echo -e "${YELLOW}AMD processor detected - skipping Intel Microcode installation.${NC}"
 fi
 
 # ─── 6. Upgrade the Server ─────────────────────────────────────────────
