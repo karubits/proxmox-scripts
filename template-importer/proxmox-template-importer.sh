@@ -290,8 +290,7 @@ prompt_basic_packages() {
         read -p "Do you want to install basic packages (${PACKAGES}) into the image? [y/N]: " install_packages_choice
         if [[ "$install_packages_choice" =~ ^[Yy]$ ]]; then
             echo -e "${BLUE}Customizing image with basic packages...${NC}"
-            sudo virt-customize -a "${CLOUD_IMAGE_PATH}" --install "$PACKAGES"
-            if [ $? -eq 0 ]; then
+            if sudo virt-customize -a "${CLOUD_IMAGE_PATH}" --install "$PACKAGES"; then
                 echo -e "${GREEN}Image customized successfully.${NC}"
             else
                 echo -e "${RED}Image customization failed.${NC}"
@@ -393,8 +392,8 @@ get_cloud_init_inputs() {
     read -p "Enter VM USER (e.g., karubits): " VM_USER
     VM_USER=${VM_USER:-karubits}
     read -rs -p "Enter VM Password: " VM_PASSWORD; echo ""
-    read -p "Enter DNS1 [1.1.1.1]: " DNS1; DNS1=${DNS1:-1.1.1.1}
-    read -p "Enter DNS2 [8.8.8.8]: " DNS2; DNS2=${DNS2:-8.8.8.8}
+    read -p "Enter DNS1 [9.9.9.9]: " DNS1; DNS1=${DNS1:-9.9.9.9}
+    read -p "Enter DNS2 [149.112.112.112]: " DNS2; DNS2=${DNS2:-149.112.112.112}
     read -p "Enter DNS Search Domain [karubits.com]: " DNSSEARCH; DNSSEARCH=${DNSSEARCH:-karubits.com}
     read -p "Enable EFI? [y/N]: " efi_choice
     if [[ "$efi_choice" =~ ^[Yy]$ ]]; then
@@ -489,11 +488,20 @@ import_vm() {
     echo -e "${BLUE}Attaching disk to VM template...${NC}"
     # Wait a moment for the import to complete and the disk to be available
     sleep 2
-    qm set ${VM_TEMPLATE_ID} \
-        --scsihw virtio-scsi-pci \
-        --scsi0 "${STORAGE}:${VM_TEMPLATE_ID}/vm-${VM_TEMPLATE_ID}-disk-0.qcow2,discard=on,ssd=1" \
-        --boot c \
-        --bootdisk scsi0
+    
+    # Get the disk name that was imported
+    DISK_NAME=$(qm config ${VM_TEMPLATE_ID} | grep "unused0" | cut -d':' -f2 | tr -d ' ')
+    if [ -n "$DISK_NAME" ]; then
+        # First attach the disk to scsi0 using the correct format
+        qm set ${VM_TEMPLATE_ID} \
+            --scsihw virtio-scsi-pci \
+            --scsi0 "${STORAGE}:vm-${VM_TEMPLATE_ID}-disk-0,discard=on,ssd=1" \
+            --boot c \
+            --bootdisk scsi0
+    else
+        echo -e "${RED}Failed to find imported disk. Exiting.${NC}"
+        exit 1
+    fi
 
     # Only configure cloud-init for non-desktop images
     if [ "$is_kali_desktop" = false ]; then
