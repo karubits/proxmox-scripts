@@ -53,6 +53,7 @@ UPGRADE_SERVER=0
 ENABLE_HA=0
 INSTALL_BANNER=0
 REBOOT_AFTER=0
+UPDATE_LXC_TEMPLATES=0
 
 # Ask all questions upfront
 echo -e "${YELLOW}Please answer the following questions to configure the script:${NC}\n"
@@ -97,6 +98,10 @@ if ask_yes_no "Do you want to install a pretty login banner?"; then
     INSTALL_BANNER=1
 fi
 
+if ask_yes_no "Do you want to update LXC container templates?"; then
+    UPDATE_LXC_TEMPLATES=1
+fi
+
 if ask_yes_no "Do you want to reboot the server after completion?"; then
     REBOOT_AFTER=1
 fi
@@ -112,6 +117,7 @@ echo -e "  • Install Intel Microcode: ${GREEN}$([ $INSTALL_MICROCODE -eq 1 ] &
 echo -e "  • Upgrade Server: ${GREEN}$([ $UPGRADE_SERVER -eq 1 ] && echo "Yes" || echo "No")${NC}"
 echo -e "  • HA Services: ${GREEN}$([ $ENABLE_HA -eq 1 ] && echo "Enable" || echo "Disable")${NC}"
 echo -e "  • Install Login Banner: ${GREEN}$([ $INSTALL_BANNER -eq 1 ] && echo "Yes" || echo "No")${NC}"
+echo -e "  • Update LXC Templates: ${GREEN}$([ $UPDATE_LXC_TEMPLATES -eq 1 ] && echo "Yes" || echo "No")${NC}"
 echo -e "  • Reboot After: ${GREEN}$([ $REBOOT_AFTER -eq 1 ] && echo "Yes" || echo "No")${NC}"
 
 if ! ask_yes_no "Do you want to proceed with these settings?"; then
@@ -335,7 +341,15 @@ EOF
     [ -f /var/run/motd ] && > /var/run/motd
 fi
 
-# ─── 9. Reboot if Requested ─────────────────────────────────────────────
+# ─── 9. Update LXC Container Templates ────────────────────────────────
+if [ $UPDATE_LXC_TEMPLATES -eq 1 ]; then
+    print_banner "Updating LXC Container Templates"
+    echo -e "${GREEN}Updating LXC container templates...${NC}"
+    pveam update
+    echo -e "${GREEN}LXC container templates have been updated.${NC}"
+fi
+
+# ─── 10. Reboot if Requested ─────────────────────────────────────────────
 if [ $REBOOT_AFTER -eq 1 ]; then
     print_banner "Rebooting Server"
     echo -e "${GREEN}Rebooting...${NC}"
