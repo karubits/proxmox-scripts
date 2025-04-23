@@ -40,8 +40,87 @@ ask_yes_no() {
     done
 }
 
-# ─── 1. Configure NTP via Chrony ───────────────────────────────────────
+# ─── Collect All Answers Upfront ──────────────────────────────────────
+print_banner "Configuration Questions"
+
+# Initialize variables to store answers
+CONFIGURE_NTP=0
+DISABLE_NAG=0
+FIX_REPOS=0
+INSTALL_LLDP=0
+INSTALL_MICROCODE=0
+UPGRADE_SERVER=0
+ENABLE_HA=0
+INSTALL_BANNER=0
+REBOOT_AFTER=0
+
+# Ask all questions upfront
+echo -e "${YELLOW}Please answer the following questions to configure the script:${NC}\n"
+
 if ask_yes_no "Do you want to configure NTP based on your country?"; then
+    CONFIGURE_NTP=1
+fi
+
+if ask_yes_no "Do you want to disable the Proxmox subscription nag message?"; then
+    DISABLE_NAG=1
+fi
+
+if ask_yes_no "Do you want to disable the Enterprise Repo and enable the Community Repo?"; then
+    FIX_REPOS=1
+fi
+
+if ask_yes_no "Do you want to install LLDP and configure Linux-style interface name reporting?"; then
+    INSTALL_LLDP=1
+fi
+
+if grep -q "Intel" /proc/cpuinfo; then
+    if ask_yes_no "Do you want to install the latest Intel Microcode (v3.20250211.1)?"; then
+        INSTALL_MICROCODE=1
+    fi
+fi
+
+if ask_yes_no "Do you want to upgrade the server now?"; then
+    UPGRADE_SERVER=1
+fi
+
+if systemctl is-active --quiet pve-ha-lrm; then
+    if ask_yes_no "HA services are active. Do you want to disable HA services for a single node environment?"; then
+        ENABLE_HA=1
+    fi
+else
+    if ask_yes_no "HA services are not active. Do you want to enable HA services?"; then
+        ENABLE_HA=1
+    fi
+fi
+
+if ask_yes_no "Do you want to install a pretty login banner?"; then
+    INSTALL_BANNER=1
+fi
+
+if ask_yes_no "Do you want to reboot the server after completion?"; then
+    REBOOT_AFTER=1
+fi
+
+# Show summary of answers
+print_banner "Configuration Summary"
+echo -e "${YELLOW}The following actions will be performed:${NC}"
+echo -e "  • Configure NTP: ${GREEN}$([ $CONFIGURE_NTP -eq 1 ] && echo "Yes" || echo "No")${NC}"
+echo -e "  • Disable Subscription Nag: ${GREEN}$([ $DISABLE_NAG -eq 1 ] && echo "Yes" || echo "No")${NC}"
+echo -e "  • Fix Repositories: ${GREEN}$([ $FIX_REPOS -eq 1 ] && echo "Yes" || echo "No")${NC}"
+echo -e "  • Install LLDP: ${GREEN}$([ $INSTALL_LLDP -eq 1 ] && echo "Yes" || echo "No")${NC}"
+echo -e "  • Install Intel Microcode: ${GREEN}$([ $INSTALL_MICROCODE -eq 1 ] && echo "Yes" || echo "No")${NC}"
+echo -e "  • Upgrade Server: ${GREEN}$([ $UPGRADE_SERVER -eq 1 ] && echo "Yes" || echo "No")${NC}"
+echo -e "  • HA Services: ${GREEN}$([ $ENABLE_HA -eq 1 ] && echo "Enable" || echo "Disable")${NC}"
+echo -e "  • Install Login Banner: ${GREEN}$([ $INSTALL_BANNER -eq 1 ] && echo "Yes" || echo "No")${NC}"
+echo -e "  • Reboot After: ${GREEN}$([ $REBOOT_AFTER -eq 1 ] && echo "Yes" || echo "No")${NC}"
+
+if ! ask_yes_no "Do you want to proceed with these settings?"; then
+    echo -e "${RED}Script aborted by user.${NC}"
+    exit 1
+fi
+
+# ─── 1. Configure NTP via Chrony ───────────────────────────────────────
+if [ $CONFIGURE_NTP -eq 1 ]; then
     print_banner "Configuring NTP"
     echo -e "${GREEN}Detecting your country via ${YELLOW}[ipinfo.io](https://www.google.com/search?q=ipinfo.io)${NC}"
     COUNTRY=$(curl -s ipinfo.io | grep '"country":' | cut -d'"' -f4)
@@ -81,7 +160,7 @@ EOF
 fi
 
 # ─── 2. Disable the Proxmox Subscription Nag ───────────────────────────
-if ask_yes_no "Do you want to disable the Proxmox subscription nag message?"; then
+if [ $DISABLE_NAG -eq 1 ]; then
     print_banner "Disabling Subscription Nag"
     echo -e "${GREEN}Creating /etc/apt/apt.conf.d/no-nag-script...${NC}"
     cat <<'EOF' > /etc/apt/apt.conf.d/no-nag-script
@@ -98,7 +177,7 @@ EOF
 fi
 
 # ─── 3. Fix Repositories (Enterprise → Community) ─────────────────────
-if ask_yes_no "Do you want to disable the Enterprise Repo and enable the Community Repo?"; then
+if [ $FIX_REPOS -eq 1 ]; then
     print_banner "Fixing Repositories"
     # Disable Enterprise repos
     if [ -f /etc/apt/sources.list.d/pve-enterprise.list ]; then
@@ -121,7 +200,7 @@ EOF
 fi
 
 # ─── 4. Install LLDP and Configure Interface Reporting ────────────────
-if ask_yes_no "Do you want to install LLDP and configure Linux-style interface name reporting?"; then
+if [ $INSTALL_LLDP -eq 1 ]; then
     print_banner "Installing LLDP"
     echo -e "${GREEN}Installing lldpd and sysfsutils...${NC}"
     apt-get install lldpd sysfsutils -y
@@ -154,29 +233,26 @@ if ask_yes_no "Do you want to install LLDP and configure Linux-style interface n
 fi
 
 # ─── 5. Install Latest Intel Microcode ────────────────────────────────
-# Check if system has an Intel processor
-if grep -q "Intel" /proc/cpuinfo; then
-    if ask_yes_no "Do you want to install the latest Intel Microcode (v3.20241112.1)?"; then
-        print_banner "Installing Intel Microcode"
-        MICROCODE_DEB="intel-microcode_3.20241112.1_amd64.deb"
-        URL="http://ftp.us.debian.org/debian/pool/non-free-firmware/i/intel-microcode/${MICROCODE_DEB}"
-        echo -e "${GREEN}Downloading Intel Microcode from:${NC} ${YELLOW}$URL${NC}"
-        apt-get install wget -y
-        wget -q "$URL" -O "$MICROCODE_DEB"
-        if [ -f "$MICROCODE_DEB" ]; then
-            echo -e "${GREEN}Installing Intel Microcode...${NC}"
-            dpkg -i "$MICROCODE_DEB"
-            rm -f "$MICROCODE_DEB"
-        else
-            echo -e "${RED}Failed to download Intel Microcode.${NC}"
-        fi
+if [ $INSTALL_MICROCODE -eq 1 ]; then
+    print_banner "Installing Intel Microcode"
+    MICROCODE_DEB="intel-microcode_3.20250211.1_amd64.deb"
+    URL="http://ftp.us.debian.org/debian/pool/non-free-firmware/i/intel-microcode/${MICROCODE_DEB}"
+    echo -e "${GREEN}Installing iucode-tool...${NC}"
+    apt-get install iucode-tool -y
+    echo -e "${GREEN}Downloading Intel Microcode from:${NC} ${YELLOW}$URL${NC}"
+    apt-get install wget -y
+    wget -q "$URL" -O "$MICROCODE_DEB"
+    if [ -f "$MICROCODE_DEB" ]; then
+        echo -e "${GREEN}Installing Intel Microcode...${NC}"
+        dpkg -i "$MICROCODE_DEB"
+        rm -f "$MICROCODE_DEB"
+    else
+        echo -e "${RED}Failed to download Intel Microcode.${NC}"
     fi
-else
-    echo -e "${YELLOW}AMD processor detected - skipping Intel Microcode installation.${NC}"
 fi
 
 # ─── 6. Upgrade the Server ─────────────────────────────────────────────
-if ask_yes_no "Do you want to upgrade the server now?"; then
+if [ $UPGRADE_SERVER -eq 1 ]; then
     print_banner "Upgrading Server"
     echo -e "${GREEN}Updating package lists...${NC}"
     apt-get update
@@ -186,32 +262,25 @@ if ask_yes_no "Do you want to upgrade the server now?"; then
 fi
 
 # ─── 7. High Availability (HA) Service Management ─────────────────────
-print_banner "High Availability (HA) Management"
-
-if systemctl is-active --quiet pve-ha-lrm; then
-    if ask_yes_no "HA services are active. Do you want to disable HA services for a single node environment?"; then
+if [ $ENABLE_HA -eq 1 ]; then
+    print_banner "High Availability (HA) Management"
+    if systemctl is-active --quiet pve-ha-lrm; then
         echo -e "${GREEN}Disabling HA services...${NC}"
         systemctl disable -q --now pve-ha-lrm
         systemctl disable -q --now pve-ha-crm
         systemctl disable -q --now corosync
         echo -e "${GREEN}HA services have been disabled.${NC}"
     else
-        echo -e "${YELLOW}Keeping HA services enabled.${NC}"
-    fi
-else
-    if ask_yes_no "HA services are not active. Do you want to enable HA services?"; then
         echo -e "${GREEN}Enabling HA services...${NC}"
         systemctl enable -q --now pve-ha-lrm
         systemctl enable -q --now pve-ha-crm
         systemctl enable -q --now corosync
         echo -e "${GREEN}HA services have been enabled.${NC}"
-    else
-        echo -e "${YELLOW}HA services remain disabled.${NC}"
     fi
 fi
 
 # ─── 8. Install Pretty Login Banner ────────────────────────────────────
-if ask_yes_no "Do you want to install a pretty login banner?"; then
+if [ $INSTALL_BANNER -eq 1 ]; then
     print_banner "Installing Pretty Login Banner"
     cat << 'EOF' > /etc/update-motd.d/10-system-summary
 #!/bin/bash
@@ -227,10 +296,18 @@ DISK_SPACE=$(df -h --total | awk 'END{printf "%s (Total) | %s (Free)", $2, $4}')
 PVE_VERSION=$(pveversion | awk -F'/' '/pve-manager/ {print $2}' | awk '{print $1}')
 LOAD_AVG=$(uptime | awk -F'load average:' '{ print $2 }')
 
-MANUFACTURER=$(sudo dmidecode -s system-manufacturer)
-MODEL=$(sudo dmidecode -s system-product-name)
-SERIAL=$(sudo dmidecode -s system-serial-number)
-PROC=$(sudo dmidecode -s processor-version | head -n 1)
+# Check if running as root
+if [ "$(id -u)" -eq 0 ]; then
+    MANUFACTURER=$(dmidecode -s system-manufacturer)
+    MODEL=$(dmidecode -s system-product-name)
+    SERIAL=$(dmidecode -s system-serial-number)
+    PROC=$(dmidecode -s processor-version | head -n 1)
+else
+    MANUFACTURER=$(sudo dmidecode -s system-manufacturer)
+    MODEL=$(sudo dmidecode -s system-product-name)
+    SERIAL=$(sudo dmidecode -s system-serial-number)
+    PROC=$(sudo dmidecode -s processor-version | head -n 1)
+fi
 
 cat << EOM
 
@@ -258,9 +335,8 @@ EOF
     [ -f /var/run/motd ] && > /var/run/motd
 fi
 
-
-# ─── 9. Prompt for Reboot ─────────────────────────────────────────────
-if ask_yes_no "Do you want to reboot the server now?"; then
+# ─── 9. Reboot if Requested ─────────────────────────────────────────────
+if [ $REBOOT_AFTER -eq 1 ]; then
     print_banner "Rebooting Server"
     echo -e "${GREEN}Rebooting...${NC}"
     reboot

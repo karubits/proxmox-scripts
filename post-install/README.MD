@@ -1,5 +1,7 @@
 # Proxmox Post Installation Script
 
+![image](img/post-install.png)
+
 ## Overview
 
 This script automates post-install configuration on a Proxmox VE system. It performs the following tasks:
