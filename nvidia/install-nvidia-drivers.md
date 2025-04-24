@@ -21,11 +21,12 @@ EOF
 
 # Update initramfs and reboot
 update-initramfs -u 
+reboot
+```
 
+## Step 2: System Update and Package Installation
 
-## Step 2: System Update
-
-First, update your system and install necessary packages:
+Update your system and install necessary packages:
 
 ```bash
 # Update system packages
@@ -35,22 +36,12 @@ reboot now
 
 # Clean up unused packages
 apt autoremove -y
-```
 
-## Step 2: Install Required Packages
-
-Install the necessary build tools and kernel headers:
-
-```bash
 # Install required packages
 apt install -y build-essential dkms pve-headers
 ```
 
-
-reboot
-```
-
-## Step 4: Download and Install NVIDIA Driver
+## Step 3: Download and Install NVIDIA Driver
 
 Download and install the NVIDIA driver (adjust the version number as needed):
 
@@ -62,11 +53,10 @@ wget https://us.download.nvidia.com/XFree86/Linux-x86_64/570.144/NVIDIA-Linux-x8
 chmod +x NVIDIA-Linux-x86_64-570.144.run
 
 # Install the driver with DKMS support
-```bash
 ./NVIDIA-Linux-x86_64-*.run --kernel-module-type=proprietary --dkms --no-install-libglvnd --no-x-check
 ```
 
-## Step 5: Verify Installation
+## Step 4: Verify Installation
 
 After installation, verify that the NVIDIA driver is working correctly:
 
@@ -89,7 +79,7 @@ You should see output similar to this:
 +-----------------------------------------+------------------------+----------------------+
 ```
 
-## Step 6: Configure LXC Container
+## Step 5: Configure LXC Container
 
 To enable GPU passthrough to LXC containers, you'll need to:
 
@@ -101,7 +91,11 @@ To enable GPU passthrough to LXC containers, you'll need to:
    lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file
    ```
 
-2. Install the NVIDIA driver inside the LXC container (same version as the host)
+2. Install the NVIDIA driver inside the LXC container (same version as the host):
+   ```bash
+   ./NVIDIA-Linux-x86_64-*.run --no-kernel-module --no-install-libglvnd --no-x-check
+   ```
+   Note: We skip the kernel module installation as it was already performed on the host (Proxmox).
 
 ## Troubleshooting
 
