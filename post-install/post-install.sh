@@ -53,7 +53,7 @@ UPGRADE_SERVER=0
 ENABLE_HA=0
 INSTALL_BANNER=0
 REBOOT_AFTER=0
-UPDATE_LXC_TEMPLATES=0
+DOWNLOAD_TEMPLATES=0
 
 # Ask all questions upfront
 echo -e "${YELLOW}Please answer the following questions to configure the script:${NC}\n"
@@ -98,8 +98,8 @@ if ask_yes_no "Do you want to install a pretty login banner?"; then
     INSTALL_BANNER=1
 fi
 
-if ask_yes_no "Do you want to update LXC container templates?"; then
-    UPDATE_LXC_TEMPLATES=1
+if ask_yes_no "Do you want to download any LXC templates?"; then
+    DOWNLOAD_TEMPLATES=1
 fi
 
 if ask_yes_no "Do you want to reboot the server after completion?"; then
@@ -117,7 +117,7 @@ echo -e "  • Install Intel Microcode: ${GREEN}$([ $INSTALL_MICROCODE -eq 1 ] &
 echo -e "  • Upgrade Server: ${GREEN}$([ $UPGRADE_SERVER -eq 1 ] && echo "Yes" || echo "No")${NC}"
 echo -e "  • HA Services: ${GREEN}$([ $ENABLE_HA -eq 1 ] && echo "Enable" || echo "Disable")${NC}"
 echo -e "  • Install Login Banner: ${GREEN}$([ $INSTALL_BANNER -eq 1 ] && echo "Yes" || echo "No")${NC}"
-echo -e "  • Update LXC Templates: ${GREEN}$([ $UPDATE_LXC_TEMPLATES -eq 1 ] && echo "Yes" || echo "No")${NC}"
+echo -e "  • Download LXC Templates: ${GREEN}$([ $DOWNLOAD_TEMPLATES -eq 1 ] && echo "Yes" || echo "No")${NC}"
 echo -e "  • Reboot After: ${GREEN}$([ $REBOOT_AFTER -eq 1 ] && echo "Yes" || echo "No")${NC}"
 
 if ! ask_yes_no "Do you want to proceed with these settings?"; then
@@ -341,12 +341,79 @@ EOF
     [ -f /var/run/motd ] && > /var/run/motd
 fi
 
-# ─── 9. Update LXC Container Templates ────────────────────────────────
-if [ $UPDATE_LXC_TEMPLATES -eq 1 ]; then
-    print_banner "Updating LXC Container Templates"
-    echo -e "${GREEN}Updating LXC container templates...${NC}"
-    pveam update
-    echo -e "${GREEN}LXC container templates have been updated.${NC}"
+# ─── 9. Update and Download LXC Templates ─────────────────────────────
+print_banner "Updating LXC Templates"
+echo -e "${GREEN}Updating LXC template list...${NC}"
+pveam update
+
+if [ $DOWNLOAD_TEMPLATES -eq 1 ]; then
+    print_banner "Downloading LXC Templates"
+    
+    # Check for compatible storage
+    STORAGE_LIST=$(awk '/^[^#].*: / {name=$2} /content/ && /vztmpl/ {print name}' /etc/pve/storage.cfg)
+    
+    if [ -z "$STORAGE_LIST" ]; then
+        echo -e "${RED}No compatible LXC template storage found. Skipping template downloads.${NC}"
+    else
+        # Count number of storage options
+        STORAGE_COUNT=$(echo "$STORAGE_LIST" | wc -l)
+        
+        # Handle storage selection
+        if [ "$STORAGE_COUNT" -eq 1 ]; then
+            SELECTED_STORAGE="$STORAGE_LIST"
+            echo -e "${GREEN}Only one LXC template storage available: ${YELLOW}$SELECTED_STORAGE${NC}"
+            echo -e "${GREEN}Automatically selected for template downloads.${NC}"
+        else
+            echo -e "${YELLOW}Available LXC template storage options:${NC}"
+            STORAGE_ARRAY=($STORAGE_LIST)
+            for i in "${!STORAGE_ARRAY[@]}"; do
+                printf "%3d) %s\n" $((i+1)) "${STORAGE_ARRAY[$i]}"
+            done
+            
+            # Get storage selection
+            echo -e "\n${YELLOW}Enter the number of the storage to use for template downloads:${NC}"
+            read -r STORAGE_NUM
+            
+            # Validate storage selection
+            if [[ "$STORAGE_NUM" =~ ^[0-9]+$ ]] && [ "$STORAGE_NUM" -le "${#STORAGE_ARRAY[@]}" ] && [ "$STORAGE_NUM" -gt 0 ]; then
+                SELECTED_STORAGE="${STORAGE_ARRAY[$((STORAGE_NUM-1))]}"
+                echo -e "${GREEN}Selected storage: ${YELLOW}$SELECTED_STORAGE${NC}"
+            else
+                echo -e "${RED}Invalid storage selection. Skipping template downloads.${NC}"
+                exit 1
+            fi
+        fi
+        
+        # Get available templates
+        echo -e "${GREEN}Available LXC templates:${NC}"
+        TEMPLATES=$(pveam available | awk '{print $2}')
+        TEMPLATE_ARRAY=($TEMPLATES)
+        
+        # Display templates in columns
+        echo -e "${YELLOW}Available templates:${NC}"
+        for i in "${!TEMPLATE_ARRAY[@]}"; do
+            printf "%3d) %s\n" $((i+1)) "${TEMPLATE_ARRAY[$i]}"
+        done
+        
+        # Get user selection
+        echo -e "\n${YELLOW}Enter the numbers of templates to download (comma-separated):${NC}"
+        read -r SELECTION
+        
+        # Process selection
+        IFS=',' read -ra SELECTED_NUMS <<< "$SELECTION"
+        for num in "${SELECTED_NUMS[@]}"; do
+            # Remove any whitespace
+            num=$(echo "$num" | tr -d '[:space:]')
+            # Check if it's a valid number
+            if [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -le "${#TEMPLATE_ARRAY[@]}" ] && [ "$num" -gt 0 ]; then
+                template="${TEMPLATE_ARRAY[$((num-1))]}"
+                echo -e "${GREEN}Downloading template: $template${NC}"
+                pveam download "$SELECTED_STORAGE" "$template"
+            else
+                echo -e "${RED}Invalid selection: $num${NC}"
+            fi
+        done
+    fi
 fi
 
 # ─── 10. Reboot if Requested ─────────────────────────────────────────────
