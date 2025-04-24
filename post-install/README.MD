@@ -14,6 +14,7 @@ This script automates post-install configuration on a Proxmox VE system. It perf
 - Upgrades server packages
 - Provides interactive management for High Availability (HA) services
 - Optionally installs a pretty login banner with system information
+- Optionally downloads LXC templates with interactive storage selection
 - Prompts for a system reboot at the end
 
 ## Dependencies
@@ -55,6 +56,11 @@ This script automates post-install configuration on a Proxmox VE system. It perf
   - System resources
   - Network information
   - System load
+- Interactive LXC template download with:
+  - Automatic storage detection
+  - Multiple storage selection support
+  - Template list display
+  - Batch template download capability
 
 ## Notes
 
