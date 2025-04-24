@@ -34,6 +34,16 @@ Automates the setup of Intel vGPU (SR-IOV) on Proxmox VE systems. Supports:
 - GRUB configuration for vGPU support
 - System preparation for SR-IOV operation
 
+### 4. NVIDIA LXC Passthrough Guide
+**Location:** [`nvidia/`](nvidia/)
+
+Comprehensive guide for setting up NVIDIA GPU passthrough to LXC containers. Includes:
+- Step-by-step driver installation
+- Nouveau driver disablement
+- LXC container configuration
+- Verification steps
+- Troubleshooting tips
+
 ## Prerequisites
 
 - Proxmox VE .x or later
